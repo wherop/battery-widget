@@ -5,7 +5,7 @@ provider covers every size: the shape is redrawn from the box the launcher hands
 stands vertical in square or tall slots and lies horizontal in wide ones, with radii, bump,
 type and bolt all scaling from the shape's shorter side.
 
-Native implementation of the design in [`design/`](design/) — see
+Native implementation of the design in `design/` — see
 [`design/HANDOFF.md`](design/HANDOFF.md) for the written spec and
 [`design/Battery Widget.dc.html`](design/Battery%20Widget.dc.html) for the interactive
 prototype (open it in a browser; the slider and charging toggle are preview controls, not
@@ -39,18 +39,19 @@ handoff. Jetpack Glance was the handoff's first suggestion, but Glance has no ca
 primitive either: the shape would still come down to a hand-drawn bitmap, with a Compose
 dependency on top. Nothing here needs anything outside the platform framework.
 
-| File | Role |
-|---|---|
-| [BatteryDesign.kt](app/src/main/java/dev/wherop/batterywidget/BatteryDesign.kt) | Every colour, ratio, minimum and duration from the prototype, in one place |
-| [BatteryGeometry.kt](app/src/main/java/dev/wherop/batterywidget/BatteryGeometry.kt) | Pure sizing math: orientation, silhouette, body, bump, fill and bend boxes |
-| [BatteryRenderer.kt](app/src/main/java/dev/wherop/batterywidget/BatteryRenderer.kt) | Canvas drawing — track, sheen, fill, leading-edge bend, bolt, percentage |
-| [BatteryWidgetUpdater.kt](app/src/main/java/dev/wherop/batterywidget/BatteryWidgetUpdater.kt) | Renders into every placed widget, including the 0.5s fill/colour transition |
-| [BatteryWidgetProvider.kt](app/src/main/java/dev/wherop/batterywidget/BatteryWidgetProvider.kt) | Widget lifecycle: placement, periodic update, resize |
-| [BatteryStatus.kt](app/src/main/java/dev/wherop/batterywidget/BatteryStatus.kt) | Level and charging state from the sticky `ACTION_BATTERY_CHANGED` broadcast |
-| [PowerEventReceiver.kt](app/src/main/java/dev/wherop/batterywidget/PowerEventReceiver.kt) | Immediate redraw on plug/unplug and the low/okay thresholds |
-| [UpdateScheduler.kt](app/src/main/java/dev/wherop/batterywidget/UpdateScheduler.kt) | Inexact 15-minute polling alarm |
-| [WidgetSize.kt](app/src/main/java/dev/wherop/batterywidget/WidgetSize.kt) | The pixel box a widget instance currently occupies |
-| [PreviewActivity.kt](app/src/main/java/dev/wherop/batterywidget/PreviewActivity.kt) | Development harness mirroring the prototype's preview |
+| File                                                                                            | Role                                                                         |
+|-------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------|
+| [BatteryDesign.kt](app/src/main/java/dev/wherop/batterywidget/BatteryDesign.kt)                 | Every colour, ratio, minimum and duration from the prototype, in one place   |
+| [BatteryGeometry.kt](app/src/main/java/dev/wherop/batterywidget/BatteryGeometry.kt)             | Pure sizing math: orientation, silhouette, body, bump, fill and bend boxes   |
+| [BatteryRenderer.kt](app/src/main/java/dev/wherop/batterywidget/BatteryRenderer.kt)             | Canvas drawing — track, sheen, fill, leading-edge bend, bolt, percentage     |
+| [BatteryWidgetUpdater.kt](app/src/main/java/dev/wherop/batterywidget/BatteryWidgetUpdater.kt)   | Renders into every placed widget, including the 0.5s fill/colour transition  |
+| [BatteryWidgetProvider.kt](app/src/main/java/dev/wherop/batterywidget/BatteryWidgetProvider.kt) | Widget lifecycle: placement, periodic update, resize                         |
+| [BatteryStatus.kt](app/src/main/java/dev/wherop/batterywidget/BatteryStatus.kt)                 | Level and charging state from the sticky `ACTION_BATTERY_CHANGED` broadcast  |
+| [ChargingJobService.kt](app/src/main/java/dev/wherop/batterywidget/ChargingJobService.kt)       | Notices the charger going in and coming out, via a `JobScheduler` constraint |
+| [BootReceiver.kt](app/src/main/java/dev/wherop/batterywidget/BootReceiver.kt)                   | Re-arms the alarm and the charging job after a reboot or an app update       |
+| [UpdateScheduler.kt](app/src/main/java/dev/wherop/batterywidget/UpdateScheduler.kt)             | Inexact 15-minute polling alarm                                              |
+| [WidgetSize.kt](app/src/main/java/dev/wherop/batterywidget/WidgetSize.kt)                       | The pixel box a widget instance currently occupies                           |
+| [PreviewActivity.kt](app/src/main/java/dev/wherop/batterywidget/PreviewActivity.kt)             | Development harness mirroring the prototype's preview                        |
 
 ### Staying current
 
@@ -59,10 +60,11 @@ background process holding a runtime receiver would be killed anyway. So the wid
 an inexact non-wakeup alarm every 15 minutes, with `updatePeriodMillis` (30 minutes) as a
 backstop. Each refresh reads the current value from the sticky broadcast.
 
-The intent was that the transitions that matter visually — plugged in, unplugged, battery
-low, battery okay — would arrive immediately as manifest broadcasts through
-`PowerEventReceiver`. **They do not.** Android's implicit-broadcast restriction drops all
-four before they reach the receiver, verified on API 36:
+Plugging in and unplugging are the transitions that need to show up promptly, since the
+charging bolt appears and disappears with them. The obvious mechanism — manifest receivers
+for `ACTION_POWER_CONNECTED` and `ACTION_POWER_DISCONNECTED` — **does not work.** Android's
+implicit-broadcast restriction drops those, along with `BATTERY_LOW` and `BATTERY_OKAY`,
+before they reach the app; verified on API 36:
 
 ```
 skipped by policy at enqueue: Background execution not allowed:
@@ -70,12 +72,23 @@ receiving Intent { act=android.intent.action.ACTION_POWER_DISCONNECTED }
 to dev.wherop.batterywidget/.PowerEventReceiver
 ```
 
-So charging state currently lags by up to 15 minutes, until the alarm next fires. Note that
-`exported="false"` is not the cause — `BOOT_COMPLETED` and `MY_PACKAGE_REPLACED` reach the
-same receiver with the same flag, and the receiver's reboot and reinstall handling works.
-The framework-only fix is `JobScheduler` (`setRequiresCharging(true)` for plug-in,
-`onStopJob` for unplug, `setRequiresBatteryNotLow(true)` for the low threshold); it is an
-open decision rather than an oversight. See `CLAUDE.md` for the full diagnosis.
+(`PowerEventReceiver` was the receiver's name when that was captured; it is now
+`BootReceiver`.) So the charger is watched with `JobScheduler` instead, which is the framework's sanctioned
+replacement. One job with `setRequiresCharging(true)` gives both edges of the transition: the
+constraint becoming true starts the job, and the constraint lapsing stops it, so
+`onStartJob` means "plugged in" and `onStopJob` means "unplugged". The job stays nominally
+running for as long as the device is on power — it holds no thread and does no work, and
+exists only to be stopped.
+
+`onStopJob` also fires when the job hits its execution time limit, which is indistinguishable
+from an unplug and equally harmless: both redraw and re-arm. Re-arming is idempotent and
+happens from `onStopJob`, `onEnabled`, `BootReceiver` and every alarm tick, so a process kill
+mid-job cannot leave the watcher permanently dead.
+
+`BOOT_COMPLETED` and `MY_PACKAGE_REPLACED` are exempt from the restriction and do arrive,
+which is all [BootReceiver.kt](app/src/main/java/dev/wherop/batterywidget/BootReceiver.kt)
+now listens for. `exported="false"` was never the cause. See `CLAUDE.md` for the full
+diagnosis and for how to drive the job from `adb`.
 
 ### The 0.5s transition
 
@@ -113,12 +126,13 @@ checked line by line against the prototype's `renderVals()`; the geometry stays 
 
 What is verified on a device, and what is not:
 
-| Area | State |
-|---|---|
-| Drawing, geometry, thresholds, bolt | Verified against the prototype |
-| Widget placement, sizing, resize | Verified on a homescreen |
-| Reading battery level and charging state | Verified |
-| Reboot / reinstall refresh | Verified |
-| 15-minute polling alarm | Confirmed scheduled, not observed firing |
-| 0.5s fill animation and `CssEase.kt` | Never executed |
-| Immediate response to the charger | **Broken** — see "Staying current" |
+| Area                                               | State                                         |
+|----------------------------------------------------|-----------------------------------------------|
+| Drawing, geometry, thresholds, bolt                | Verified against the prototype                |
+| Widget placement, sizing, resize                   | Verified on a homescreen                      |
+| Reading battery level and charging state           | Verified                                      |
+| Reboot / reinstall refresh                         | Verified                                      |
+| 15-minute polling alarm                            | Confirmed scheduled, not observed firing      |
+| 0.5s fill animation and `CssEase.kt`               | Never executed                                |
+| `ChargingJobService` start and stop callbacks      | Verified by driving the job from `adb`        |
+| The charging constraint firing from a real charger | Not verified — the emulator can't simulate it |

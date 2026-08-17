@@ -12,9 +12,10 @@ import android.os.SystemClock
  *
  * `ACTION_BATTERY_CHANGED` cannot be received from the manifest, and a background process
  * holding a runtime receiver would be killed anyway, so the widget polls: an inexact,
- * non-wakeup repeating alarm the system is free to batch with other work. Charging and
- * low-battery transitions arrive immediately through [PowerEventReceiver], and
- * `updatePeriodMillis` in the widget metadata is the last-resort backstop.
+ * non-wakeup repeating alarm the system is free to batch with other work. This is what tracks
+ * the level drifting down; plugging in and unplugging arrive promptly through
+ * [ChargingJobService], and `updatePeriodMillis` in the widget metadata is the last-resort
+ * backstop.
  */
 internal object UpdateScheduler {
 

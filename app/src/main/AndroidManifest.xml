@@ -35,18 +35,24 @@
                 android:resource="@xml/battery_widget_info" />
         </receiver>
 
+        <!-- Only these two system broadcasts still reach a manifest receiver. The battery and
+             power ones are dropped by the implicit-broadcast restriction; the job service below
+             replaces them. -->
         <receiver
-            android:name=".PowerEventReceiver"
+            android:name=".BootReceiver"
             android:exported="false">
             <intent-filter>
-                <action android:name="android.intent.action.ACTION_POWER_CONNECTED" />
-                <action android:name="android.intent.action.ACTION_POWER_DISCONNECTED" />
-                <action android:name="android.intent.action.BATTERY_LOW" />
-                <action android:name="android.intent.action.BATTERY_OKAY" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <!-- Watches the charger. BIND_JOB_SERVICE is required by the platform: it is what stops
+             any app other than the system from binding to a JobService. -->
+        <service
+            android:name=".ChargingJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
     </application>
 

@@ -30,16 +30,22 @@ class BatteryWidgetProvider : AppWidgetProvider() {
 
     override fun onEnabled(context: Context) {
         UpdateScheduler.schedule(context)
+        ChargingJobService.schedule(context)
     }
 
     override fun onDisabled(context: Context) {
         UpdateScheduler.cancel(context)
+        ChargingJobService.cancel(context)
         WidgetState.clear(context)
     }
 
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         if (intent.action == ACTION_REFRESH) {
+            // Self-heal: if the process was killed while the charging job was running, nothing
+            // ever reached onStopJob to re-arm it. Scheduling is idempotent, so paying for it
+            // on every tick is cheaper than letting the charger go unnoticed until a reboot.
+            ChargingJobService.schedule(context)
             // Keep the broadcast alive for the length of the fill animation.
             val pendingResult = goAsync()
             BatteryWidgetUpdater.updateAll(context, animate = true) { pendingResult.finish() }
