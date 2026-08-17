@@ -56,9 +56,14 @@ dependency on top. Nothing here needs anything outside the platform framework.
 ### Staying current
 
 `ACTION_BATTERY_CHANGED` fires constantly and cannot be received from the manifest, and a
-background process holding a runtime receiver would be killed anyway. So the widget polls:
-an inexact non-wakeup alarm every 15 minutes, with `updatePeriodMillis` (30 minutes) as a
-backstop. Each refresh reads the current value from the sticky broadcast.
+background process holding a runtime receiver would be killed anyway. So the widget polls: an
+inexact non-wakeup alarm every **5 minutes** in release and every minute in debug builds, with
+`updatePeriodMillis` (30 minutes) as a backstop. Each refresh reads the current value from the
+sticky broadcast.
+
+This alarm is the widget's primary mechanism, not a fallback — see below. Shortening it is
+affordable because it is non-wakeup: it never wakes a sleeping phone, only piggybacking on
+moments the device is already awake, which is when someone might be looking at the widget.
 
 Plugging in and unplugging are the transitions that need to show up promptly, since the
 charging bolt appears and disappears with them. The obvious mechanism — manifest receivers
@@ -80,10 +85,24 @@ constraint becoming true starts the job, and the constraint lapsing stops it, so
 running for as long as the device is on power — it holds no thread and does no work, and
 exists only to be stopped.
 
-`onStopJob` also fires when the job hits its execution time limit, which is indistinguishable
-from an unplug and equally harmless: both redraw and re-arm. Re-arming is idempotent and
-happens from `onStopJob`, `onEnabled`, `BootReceiver` and every alarm tick, so a process kill
-mid-job cannot leave the watcher permanently dead.
+That was the design. **On real hardware it did not pay off.** Measured on a Galaxy A53 (One UI
+8, API 36): the charger went in at 22:31:27, the bolt appeared at ~22:37 because the *alarm*
+fired, and the charging constraint was not satisfied until 22:46:41 — over fifteen minutes,
+nine minutes behind the alarm. `dumpsys jobscheduler` reported `Power connected: true` and
+`Battery charging: false` simultaneously throughout, and 52 pending jobs across the device
+(Samsung's own included) were equally stuck, so this is platform behaviour rather than a bug
+here.
+
+Holding the job open also misfired badly. The job originally returned `true` from `onStartJob`
+and never finished, so that `onStopJob` would signal the unplug; once the constraint finally
+satisfied, that became a restart loop of six job instances a minute, each redrawing the widget
+twice. The service now redraws once and calls `jobFinished()`, and `onStopJob` no longer
+re-arms.
+
+So `ChargingJobService` is an opportunistic fast path that should help on devices whose
+platform reports charging promptly, and the alarm is what actually carries the widget — it is
+the only thing that notices an unplug at all. Re-arming happens from `onEnabled`,
+`BootReceiver` and every alarm tick.
 
 `BOOT_COMPLETED` and `MY_PACKAGE_REPLACED` are exempt from the restriction and do arrive,
 which is all [BootReceiver.kt](app/src/main/java/dev/wherop/batterywidget/BootReceiver.kt)
@@ -98,9 +117,9 @@ animator, so `BatteryWidgetUpdater` posts eight bitmaps across 500ms, eased with
 they run. The percentage text and the charging bolt switch instantly, as they do in CSS.
 Level changes of 0% skip the animation entirely, so the common case is a single push.
 
-This path has not actually run yet: the only two things that request an animated update are
-the dead power broadcasts above and the 15-minute alarm, so neither it nor `CssEase.kt` has
-been exercised on a device.
+This path does run — every alarm tick requests an animated update, and the level moves between
+ticks — but the frames have not been inspected closely, and `CssEase.kt` has no test of its
+own.
 
 ## Deviations from the handoff
 
@@ -118,21 +137,24 @@ been exercised on a device.
 
 ## Status
 
-Built, tested and run on an API 36 emulator on 2026-08-17. It compiles clean, the eight
-geometry tests pass, and the rendering matches the prototype at all six sample sizes across
-the green, amber and red thresholds, charging and not. `BatteryGeometry.kt` was additionally
-checked line by line against the prototype's `renderVals()`; the geometry stays pinned by
+Built and tested on an API 36 emulator, then run end to end on a Samsung Galaxy A53 5G (One UI
+8, API 36, density 450) on 2026-08-17. It compiles clean, the eight geometry tests pass, and
+the rendering matches the prototype at all six sample sizes across the green, amber and red
+thresholds, charging and not. `BatteryGeometry.kt` was additionally checked line by line
+against the prototype's `renderVals()`; the geometry stays pinned by
 [BatteryGeometryTest.kt](app/src/test/java/dev/wherop/batterywidget/BatteryGeometryTest.kt).
 
-What is verified on a device, and what is not:
+What is verified on a real device, and what is not:
 
-| Area                                               | State                                         |
-|----------------------------------------------------|-----------------------------------------------|
-| Drawing, geometry, thresholds, bolt                | Verified against the prototype                |
-| Widget placement, sizing, resize                   | Verified on a homescreen                      |
-| Reading battery level and charging state           | Verified                                      |
-| Reboot / reinstall refresh                         | Verified                                      |
-| 15-minute polling alarm                            | Confirmed scheduled, not observed firing      |
-| 0.5s fill animation and `CssEase.kt`               | Never executed                                |
-| `ChargingJobService` start and stop callbacks      | Verified by driving the job from `adb`        |
-| The charging constraint firing from a real charger | Not verified — the emulator can't simulate it |
+| Area                                       | State                                                      |
+|--------------------------------------------|------------------------------------------------------------|
+| Drawing, geometry, thresholds, bolt        | Verified against the prototype, emulator and phone         |
+| Widget placement, sizing, resize           | Verified on a real homescreen                              |
+| Reading battery level and charging state   | Verified                                                   |
+| Reboot / reinstall refresh                 | Verified                                                   |
+| Polling alarm                              | Verified firing; it drives every update below              |
+| Charger in → bolt appears                  | Verified, via the alarm — ~6 min at the 15-minute interval |
+| Charger out → bolt disappears              | Verified, via the alarm — 34s at the 1-minute interval     |
+| `ChargingJobService` firing from a charger | Verified, but 15 min after plug-in, behind the alarm       |
+| 0.5s fill animation and `CssEase.kt`       | Has now run; not inspected frame by frame                  |
+| Non-Samsung hardware                       | Untested — the charging constraint may well be prompt      |

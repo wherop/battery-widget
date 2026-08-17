@@ -10,8 +10,9 @@ API 36 emulator the same day. It compiles clean, the 8 geometry tests pass, and 
 matches the prototype at all six sample sizes across the green/amber/red thresholds.
 
 Charger detection was reworked onto `JobScheduler` the same day, replacing the manifest
-broadcasts that Android silently drops. See "Battery state never arrives by broadcast" under
-Gotchas for why, and for the one part of it the emulator cannot exercise.
+broadcasts that Android silently drops, and then tested end to end on a Galaxy A53. **The
+polling alarm, not the job, is what actually keeps the widget current** — read "Battery state
+never arrives by broadcast" under Gotchas before touching either.
 
 ## Build & run
 
@@ -49,8 +50,8 @@ adb shell dumpsys battery unplug
 adb shell dumpsys battery reset          # hand control back to the real battery
 ```
 
-**A level change alone does not repaint a placed widget** — nothing wakes the app for it, so
-you are waiting on the 15-minute alarm. To see a change immediately, reinstall
+**A level change alone does not repaint a placed widget immediately** — nothing wakes the app
+for it, so you are waiting on the alarm (a minute in a debug build). To force one, reinstall
 (`MY_PACKAGE_REPLACED` does get through), drive `ChargingJobService` with `cmd jobscheduler`
 (see Gotchas), or use `PreviewActivity`, which reads battery state on create and has its own
 slider.
@@ -120,25 +121,54 @@ still listens for. Do not re-add the four dead actions, and note that `exported=
 **not** the cause: `MY_PACKAGE_REPLACED` reaches the same receiver with the same flag, so do
 not "fix" anything here by exporting the receivers.
 
-`ChargingJobService` replaces them. One job, `setRequiresCharging(true)`, gives both edges of
-the transition: the constraint becoming true starts it (`onStartJob` = plugged in), and the
-constraint lapsing stops it (`onStopJob` = unplugged). It deliberately returns `true` from
-`onStartJob` and never calls `jobFinished()` — the job stays nominally running for as long as
-the device is on power, holding no thread, existing only to be stopped. Things to keep
-straight about it:
+`ChargingJobService` is the intended replacement — one job, `setRequiresCharging(true)`, fired
+when charging starts. **On real hardware it did not earn its keep, and the polling alarm is
+what actually works.** Measured on a Galaxy A53 (One UI 8, API 36) on 2026-08-17:
 
-- **`onStopJob` cannot distinguish an unplug from the execution time limit**, and does not
-  need to: both redraw and re-arm. Expect a redraw cycle every few minutes while charging.
-  The limit was ~5 minutes on the API 36 emulator, not the 10 the docs imply.
-- **Re-arming is idempotent and happens from four places** — `onStopJob`, `onEnabled`,
-  `BootReceiver`, and every 15-minute alarm tick. The alarm one is the important one: if the
-  process is killed while the job is running, nothing ever reaches `onStopJob`, and without a
-  periodic re-arm the watcher would stay dead until the next reboot.
+| Event | Time |
+|---|---|
+| Charger plugged in | 22:31:27 |
+| Bolt appeared on the widget — via the **alarm** | ~22:37 |
+| `JobScheduler` charging constraint finally satisfied | 22:46:41 |
+
+**The alarm beat the job by nine minutes.** `dumpsys jobscheduler` reported `Power connected:
+true` alongside `Battery charging: false` for over fifteen minutes of genuine AC charging, and
+every other app on the device was equally stuck — Samsung's own `SystemFileBackupManager`,
+Google's WorkManager jobs, 52 pending jobs with an unsatisfied CHARGING bit. Nothing to fix on
+our side; just do not assume the constraint is prompt.
+
+Three things to keep straight:
+
+- **Never reintroduce the hold-open.** The first version returned `true` from `onStartJob` and
+  never called `jobFinished()`, so `onStopJob` would fire on unplug and hand us the other edge
+  for free. On the A53 that became a restart loop the moment the constraint satisfied: **six
+  job instances a minute**, each redrawing the widget twice, presumably job quota stopping the
+  held job and our own `onStopJob` re-arming it into a still-satisfied constraint. The service
+  now redraws once, calls `jobFinished()`, and `onStopJob` does not re-arm.
+- **Nothing catches an unplug except the alarm**, which is the price of the above and the
+  reason the release interval is five minutes rather than fifteen.
 - `setRequiresBatteryNotLow(true)` was considered for the colour thresholds and **not** used.
   It only signals the recovery direction, and against the system's own low threshold, not the
-  design's 25%/15%. The 15-minute alarm covers level drift honestly; a second job would not.
-- The 15-minute alarm in `UpdateScheduler` still exists and is still the only thing tracking
-  the level falling. Confirmed scheduled via `dumpsys alarm`.
+  design's 25%/15%.
+
+Re-arming is idempotent and happens from `onEnabled`, `BootReceiver` and every alarm tick —
+deliberately **not** from `onStopJob`. It is also what brings the job back after it fires,
+since a job is one-shot.
+
+### Polling interval: five minutes, one in debug
+
+`UpdateScheduler` uses `BuildConfig.DEBUG` to poll every **60s in debug** and every **5 min in
+release** (`buildFeatures { buildConfig = true }` in `app/build.gradle.kts` exists for this).
+Testing anything charger-related against a fifteen-minute alarm is unbearable; testing against
+one minute is fine.
+
+Five rather than `INTERVAL_FIFTEEN_MINUTES` because the alarm is the primary mechanism, not a
+backstop. It is cheap to shorten because it is **non-wakeup** (`AlarmManager.ELAPSED`, not
+`ELAPSED_WAKEUP`): it never wakes a sleeping phone, it fires when the device is already awake,
+which is when somebody might be looking at the widget. It does give up the batching that the
+`INTERVAL_*` constants get.
+
+`updatePeriodMillis` cannot follow it down — the system clamps that to 30 minutes.
 
 **The emulator cannot trigger the charging constraint naturally.** `dumpsys battery set ac 1`
 plus `set status 2` makes `BatteryStatus.read()` report charging correctly, but JobScheduler's
@@ -151,10 +181,24 @@ adb shell cmd jobscheduler stop -u 0 dev.wherop.batterywidget 1 # fires onStopJo
 adb shell dumpsys jobscheduler | grep -A3 "JOB #u0a.*ChargingJobService"
 ```
 
-Both callbacks were verified this way end to end: the bolt appears on run, disappears on
-stop, and the job re-arms itself with `unsatisfied:0x1` (waiting on CHARGING). What is **not**
-verified is the constraint firing from a real charger — that is platform plumbing, but it has
-not been seen on hardware.
+The constraint firing from a real charger **has** now been seen — on the A53, 15 minutes after
+plugging in (see the table above).
+
+### Testing on the Galaxy A53 over wireless debugging
+
+USB debugging charges the phone, so the plug-in transition cannot be observed over a USB cable.
+Use wireless debugging: pair with `adb pair HOST:PORT CODE` (the code must be an argument — the
+interactive prompt has no stdin here), then `adb connect HOST:PORT` with the *different* port
+from the Wireless debugging screen.
+
+Two things will bite:
+
+- **Samsung's Sleep Mode / power saving kills the connection.** It turns off wireless and
+  suspends apps; `adb` hangs while still listing the device as `device`. Turn it off for the
+  duration, keep the screen awake, and expect to `adb disconnect` and reconnect on a new port
+  afterwards. The alarm and the job both survived it, for what it is worth.
+- **On a fresh install nothing is scheduled until a widget is placed.** `onEnabled` fires on
+  first placement, and `MY_PACKAGE_REPLACED` only fires on an update, never a first install.
 
 `README.md` documents the same mechanism under "Staying current". Keep the two in step.
 
@@ -166,8 +210,9 @@ not been seen on hardware.
   read on demand from the sticky broadcast rather than pushed.
 - The 0.5s fill transition posts 8 bitmaps from a `Handler`; the broadcast is held open with
   `goAsync()` so the process survives the frames. Skipped when the level didn't change.
-  **This path has never actually executed** — the only two things that trigger it are the
-  dead broadcasts and the 15-minute alarm. `CssEase.kt` is likewise untested and unrun.
+  It does now run — the alarm requests animated updates, and at the debug interval the level
+  moves between ticks often enough to trigger it — but nobody has inspected the frames, and
+  `CssEase.kt` still has no test.
 - `adb shell am broadcast` cannot reach the receivers (`exported="false"`), so use
   `dumpsys battery` to move state and reinstall to force a repaint.
 - Orientation is derived from the widget's box (`width > height`), not its grid span, because
