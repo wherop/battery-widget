@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Battery Widget</string>
+    <string name="widget_description">Battery level, drawn as a battery that fills up.</string>
+
+    <!-- Also used as the widget's content description. -->
+    <string name="battery_level">Battery at %1$d percent</string>
+    <string name="battery_charging">Battery at %1$d percent, charging</string>
+
+    <string name="preview_title">Battery Widget preview</string>
+    <string name="preview_charging">Charging</string>
+</resources>

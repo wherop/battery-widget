@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    @font-face { font-family: 'Roboto'; src: local('Roboto'); }
+    body { margin: 0; }
+  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600;700&display=swap" rel="stylesheet" />
+</helmet>
+<div style="min-height:100vh; width:100%; background:{{ pageBg }}; font-family:'Roboto',sans-serif; box-sizing:border-box; padding:40px 32px 64px;">
+
+  <div style="max-width:920px; margin:0 auto 36px;">
+    <div style="font-size:22px; font-weight:700; color:{{ textColor }}; margin-bottom:4px;">Battery Level Widget</div>
+    <div style="font-size:14px; color:{{ mutedColor }}; margin-bottom:24px;">Preview across homescreen widget sizes — drag to change charge level.</div>
+
+    <div style="display:flex; align-items:center; gap:20px; background:{{ controlsBg }}; backdrop-filter:blur(10px); border-radius:20px; padding:16px 20px; box-shadow:0 4px 18px rgba(30,35,45,0.12);">
+      <div style="font-size:15px; font-weight:600; color:{{ textColor }}; width:52px;">{{ percentLabel }}</div>
+      <input type="range" min="0" max="100" value="{{ level }}" onChange="{{ setLevel }}" style="flex:1; accent-color:{{ color }}; height:6px;" />
+      <label style="display:flex; align-items:center; gap:10px; font-size:14px; color:{{ textColor }}; cursor:pointer; user-select:none;">
+        Charging
+        <span onClick="{{ toggleCharging }}" style="{{ toggleTrackStyle }}">
+          <span style="{{ toggleThumbStyle }}"></span>
+        </span>
+      </label>
+    </div>
+  </div>
+
+  <div style="max-width:920px; margin:0 auto; display:flex; flex-wrap:wrap; gap:32px; align-items:flex-end;">
+    <sc-for list="{{ tiles }}" as="tile" hint-placeholder-count="6">
+      <div style="display:flex; flex-direction:column; align-items:center; gap:10px;">
+        <div style="{{ tile.cardStyle }}">
+          <div style="{{ tile.shapeWrapStyle }}">
+            <div style="{{ tile.outerStyle }}">
+              <div style="{{ tile.bumpStyle }}"></div>
+              <div style="{{ tile.bodyStyle }}">
+                <div style="{{ tile.fillStyle }}"></div>
+                <div style="{{ tile.bendStyle }}"></div>
+                <div style="{{ tile.overlayStyle }}">
+                  <sc-if value="{{ charging }}" hint-placeholder-val="{{ false }}">
+                    <svg width="{{ tile.boltSize }}" height="{{ tile.boltSize }}" viewBox="0 0 24 24" style="display:block; filter:drop-shadow(0 1px 2px rgba(0,0,0,0.25));">
+                      <path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z" fill="#ffffff" stroke="rgba(0,0,0,0.15)" stroke-width="0.5"></path>
+                    </svg>
+                  </sc-if>
+                  <div style="{{ tile.percentStyle }}">{{ percentLabel }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style="font-size:12px; font-weight:500; color:{{ mutedColor }};">{{ tile.label }}</div>
+      </div>
+    </sc-for>
+  </div>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:980,&quot;height&quot;:720},&quot;showcaseBackground&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#1C2029&quot;,&quot;options&quot;:[&quot;#1C2029&quot;,&quot;#2B2438&quot;,&quot;#123024&quot;,&quot;#EFE7D8&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Showcase&quot;}}">
+class Component extends DCLogic {
+  state = { level: 62, charging: false };
+
+  renderVals() {
+    const level = this.state.level;
+    const charging = this.state.charging;
+    const pageBg = this.props.showcaseBackground ?? '#1C2029';
+    const bgHex = pageBg.replace('#', '');
+    const r = parseInt(bgHex.substring(0, 2), 16), g = parseInt(bgHex.substring(2, 4), 16), b = parseInt(bgHex.substring(4, 6), 16);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    const isLight = luminance > 0.6;
+    const textColor = isLight ? '#20242b' : '#F3F4F6';
+    const mutedColor = isLight ? '#454b54' : '#A8ADB6';
+    const controlsBg = isLight ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.08)';
+    const color = level < 15 ? '#FF453A' : level < 25 ? '#FFB020' : '#1EDB6A';
+    const grey = '#C7C9CE';
+    const track = 'linear-gradient(60deg, #CFD1D6 0%, #BEC0C6 100%)';
+    const slot = 96, gap = 16, pad = 8;
+
+    const dims = (cols, rows) => ({
+      w: cols * slot + (cols - 1) * gap,
+      h: rows * slot + (rows - 1) * gap,
+    });
+
+    const configs = [
+      { id: 't11', label: '1 × 1', cols: 1, rows: 1 },
+      { id: 't21', label: '2 × 1', cols: 2, rows: 1 },
+      { id: 't12', label: '1 × 2', cols: 1, rows: 2 },
+      { id: 't22', label: '2 × 2', cols: 2, rows: 2 },
+      { id: 't31', label: '3 × 1', cols: 3, rows: 1 },
+      { id: 't23', label: '2 × 3', cols: 2, rows: 3 },
+    ];
+
+    const tiles = configs.map((c) => {
+      const { w, h } = dims(c.cols, c.rows);
+      const orientation = c.rows >= c.cols ? 'vertical' : 'horizontal';
+      const minSide = Math.min(w, h);
+      const availW = w - pad * 2;
+      const availH = h - pad * 2;
+
+      let bw, bh;
+      if (orientation === 'vertical') {
+        const ratio = 0.5;
+        bh = availH; bw = bh * ratio;
+        if (bw > availW) { bw = availW; bh = bw / ratio; }
+      } else {
+        const ratio = 2;
+        bw = availW; bh = bw / ratio;
+        if (bh > availH) { bh = availH; bw = bh * ratio; }
+      }
+      bw = Math.max(bw, 10); bh = Math.max(bh, 10);
+      const bMinSide = Math.min(bw, bh);
+      const bumpThickness = Math.max(3, Math.round(bMinSide * 0.14));
+      const bodyRadius = Math.round(bMinSide * 0.22);
+      const boltSize = Math.max(21, Math.round(bMinSide * 0.3));
+      const fontSize = Math.max(14, Math.min(22, Math.round(bMinSide * 0.2)));
+
+      const cardStyle = `width:${w}px; height:${h}px; box-sizing:border-box; padding:${pad}px; display:flex; align-items:center; justify-content:center;`;
+      const shapeWrapStyle = `width:${availW}px; height:${availH}px; display:flex; align-items:center; justify-content:center;`;
+
+      let outerStyle, bumpStyle, bodyStyle;
+      if (orientation === 'vertical') {
+        const bumpLen = Math.round(bw * 0.4);
+        outerStyle = `width:${bw}px; height:${bh}px; display:flex; flex-direction:column; align-items:center; filter:drop-shadow(0 3px 8px rgba(0,0,0,0.18));`;
+        bumpStyle = `order:0; width:${bumpLen}px; height:${bumpThickness}px; background:${track}; border-radius:${Math.round(bumpThickness / 2)}px ${Math.round(bumpThickness / 2)}px 0 0;`;
+        bodyStyle = `order:1; width:100%; flex:1; min-height:0; position:relative; border-radius:${bodyRadius}px; background:${track}; overflow:hidden;`;
+      } else {
+        const bumpLen = Math.round(bh * 0.4);
+        outerStyle = `width:${bw}px; height:${bh}px; display:flex; flex-direction:row; align-items:center; filter:drop-shadow(0 3px 8px rgba(0,0,0,0.18));`;
+        bumpStyle = `order:2; height:${bumpLen}px; width:${bumpThickness}px; background:${track}; border-radius:0 ${Math.round(bumpThickness / 2)}px ${Math.round(bumpThickness / 2)}px 0;`;
+        bodyStyle = `order:1; height:100%; flex:1; min-width:0; position:relative; border-radius:${bodyRadius}px; background:${track}; overflow:hidden;`;
+      }
+
+      const fillGradient = `linear-gradient(60deg, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0) 40%, rgba(0,0,0,0.06) 100%), ${color}`;
+      const fillStyle = orientation === 'vertical'
+        ? `position:absolute; left:0; right:0; bottom:0; height:${level}%; background:${fillGradient}; transition:height 0.5s ease, background 0.5s ease;`
+        : `position:absolute; top:0; bottom:0; left:0; width:${level}%; background:${fillGradient}; transition:width 0.5s ease, background 0.5s ease;`;
+      const bendSize = Math.max(3, Math.round(bMinSide * 0.06));
+      const bendStyle = orientation === 'vertical'
+        ? `position:absolute; left:0; right:0; bottom:calc(${level}% - ${bendSize / 2}px); height:${bendSize}px; border-radius:50%; background:${color}; transition:bottom 0.5s ease, background 0.5s ease;`
+        : `position:absolute; top:0; bottom:0; left:calc(${level}% - ${bendSize / 2}px); width:${bendSize}px; border-radius:50%; background:${color}; transition:left 0.5s ease, background 0.5s ease;`;
+
+      const overlayStyle = `position:absolute; inset:0; display:flex; flex-direction:${orientation === 'vertical' ? 'column' : 'row'}; align-items:center; justify-content:center; gap:${Math.max(2, Math.round(bMinSide * 0.04))}px; z-index:2;`;
+      const percentStyle = `font-size:${fontSize}px; font-weight:700; color:#ffffff; line-height:1; filter:drop-shadow(0 1px 2px rgba(0,0,0,0.25));`;
+
+      return {
+        id: c.id, label: c.label,
+        cardStyle, shapeWrapStyle, outerStyle, bumpStyle, bodyStyle, fillStyle, bendStyle,
+        overlayStyle, boltSize, percentStyle,
+      };
+    });
+
+    const toggleTrackStyle = `display:inline-flex; align-items:center; width:44px; height:26px; border-radius:13px; padding:3px; box-sizing:border-box; background:${charging ? '#34C759' : '#C9CCD1'}; transition:background 0.25s ease; cursor:pointer;`;
+    const toggleThumbStyle = `width:20px; height:20px; border-radius:50%; background:#ffffff; box-shadow:0 1px 3px rgba(0,0,0,0.25); transform:translateX(${charging ? 18 : 0}px); transition:transform 0.25s ease;`;
+
+    return {
+      level,
+      charging,
+      color,
+      pageBg,
+      textColor,
+      mutedColor,
+      controlsBg,
+      percentLabel: `${level}%`,
+      tiles,
+      toggleTrackStyle,
+      toggleThumbStyle,
+      setLevel: (e) => this.setState({ level: Number(e.target.value) }),
+      toggleCharging: () => this.setState((s) => ({ charging: !s.charging })),
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+package dev.wherop.batterywidget
+
+import android.content.Context
+
+/**
+ * The last state the widget was drawn with. Kept only so an update can animate *from*
+ * somewhere — the widget process is short-lived, so this cannot live in memory.
+ */
+internal object WidgetState {
+
+    private const val PREFS = "battery_widget_state"
+    private const val KEY_LEVEL = "level"
+    private const val KEY_CHARGING = "charging"
+
+    fun read(context: Context): BatteryStatus? {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val level = prefs.getInt(KEY_LEVEL, -1)
+        if (level < 0) return null
+        return BatteryStatus(level, prefs.getBoolean(KEY_CHARGING, false))
+    }
+
+    fun write(context: Context, status: BatteryStatus) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_LEVEL, status.level)
+            .putBoolean(KEY_CHARGING, status.charging)
+            .apply()
+    }
+
+    fun clear(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
+    }
+}

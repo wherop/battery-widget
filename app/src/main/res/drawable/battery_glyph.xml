@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Static stand-in for the launcher's widget picker and the app icon: the vertical battery at
+  62%, using the same tokens as the drawn widget (22% body radius, 14% bump thickness, 40%
+  bump length, #C7C9CE track, #1EDB6A fill). The live widget draws itself; nothing here is
+  used at runtime.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+
+    <!-- Bump -->
+    <path
+        android:fillColor="#C7C9CE"
+        android:pathData="M40,8 h16 v6 h-16 z" />
+
+    <!-- Body -->
+    <path
+        android:fillColor="#C7C9CE"
+        android:pathData="M37,14 h22 a9,9 0 0 1 9,9 v56 a9,9 0 0 1 -9,9 h-22 a9,9 0 0 1 -9,-9 v-56 a9,9 0 0 1 9,-9 z" />
+
+    <!-- Fill at 62% -->
+    <path
+        android:fillColor="#1EDB6A"
+        android:pathData="M28,42 h40 v37 a9,9 0 0 1 -9,9 h-22 a9,9 0 0 1 -9,-9 z" />
+
+</vector>

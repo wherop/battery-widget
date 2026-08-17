@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The whole widget is one bitmap drawn by BatteryRenderer at the launcher's exact size, so
+  the layout only has to hand it a full-bleed surface. Background stays transparent: the
+  silhouette's drop shadow has to sit on the wallpaper.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <ImageView
+        android:id="@+id/battery"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="@string/app_name"
+        android:scaleType="fitCenter" />
+
+</FrameLayout>

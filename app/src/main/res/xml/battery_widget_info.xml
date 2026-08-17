@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  One provider covers every span. minWidth/minHeight are a single cell on a standard grid,
+  and resizing is unrestricted in both axes — onAppWidgetOptionsChanged redraws the shape
+  for whatever box the launcher ends up giving us.
+
+  updatePeriodMillis is only a backstop; UpdateScheduler's inexact alarm and the power
+  broadcasts do the real work.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_description"
+    android:initialLayout="@layout/widget_battery"
+    android:minHeight="40dp"
+    android:minResizeHeight="40dp"
+    android:minResizeWidth="40dp"
+    android:minWidth="40dp"
+    android:previewImage="@drawable/battery_glyph"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellHeight="1"
+    android:targetCellWidth="1"
+    android:updatePeriodMillis="1800000"
+    android:widgetCategory="home_screen" />
