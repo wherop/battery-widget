@@ -174,5 +174,5 @@ What is verified on a real device, and what is not:
 | `ChargingJobService` firing from a charger | Verified, but 15 min after plug-in, behind the alarm       |
 | Faster polling while charging              | Verified on the A53: period follows the charger both ways  |
 | Charger out → bolt disappears (new)        | Verified on the A53 — 1m16s at the 1-minute interval       |
-| App standby on a fresh, never-opened install | Bucket NEVER defers the alarm ~a year; see CLAUDE.md      |
+| App standby on a fresh, never-opened install | Verified twice: alarm dead, 30-min system updates carry it |
 | Non-Samsung hardware                       | Untested — the charging constraint may well be prompt      |

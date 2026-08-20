@@ -231,11 +231,34 @@ update mechanism never runs. Launching `PreviewActivity` once moved the app to b
 (ACTIVE) and the same alarm went live (`whenElapsed=+1m44s`).
 
 This is reachable by a real user: placing a widget does not require ever opening the app. AOSP's
-`AppStandbyController` does treat a package with a bound widget as active, so the bucket may
-well promote itself on the next evaluation — that was not waited out, and it is worth retesting
-(fresh install, place the widget, leave the app unopened, check the bucket an hour later) before
-concluding anything. Until then, take a widget that never updates on a fresh install as this,
-not as a scheduling bug: check the bucket first.
+`AppStandbyController` treats a package with a bound widget as active, so the expectation was
+that the bucket would promote itself on the next evaluation. **On One UI 8 it does not.** Retested
+the same day — uninstall, reinstall, place the widget, never open the app — and 75 minutes later:
+
+| Signal | After 75 min, app never opened |
+|---|---|
+| `am get-standby-bucket` | still **50** (NEVER) |
+| Pending alarm | still armed at 120000, still `whenElapsed=+364d` |
+| Alarm deliveries (`dumpsys alarm` stats) | **1**, nine minutes after placement, then none |
+| Widget content | repainted anyway: 78% → 76% |
+
+So two mechanisms have to be kept apart:
+
+- **`UpdateScheduler`'s alarm is dead** until the app is opened once. The single delivery just
+  after placement is the grace a freshly installed app gets; after that, standby holds it.
+- **`updatePeriodMillis` still works**, because that `APPWIDGET_UPDATE` alarm is owned by the
+  system (`tag=*walarm*:android.appwidget.action.APPWIDGET_UPDATE`, uid `android`) and never
+  passes through this app's standby bucket.
+
+A never-opened install therefore degrades to the 30-minute backstop rather than freezing: the
+percentage stays roughly right, but the charger-aware polling — and with it a bolt that appears
+within a minute — only starts once the app has been launched at least once. Opening
+`PreviewActivity` moved the bucket to 10 (ACTIVE) and the same alarm went live immediately
+(`whenElapsed=+1m44s`).
+
+There is no framework-only way to raise your own bucket, and `updatePeriodMillis` cannot go
+below 30 minutes, so 30 minutes is the floor for that case. Before treating a stale widget as a
+scheduling bug, check the bucket.
 
 ### Testing on the Galaxy A53 over wireless debugging
 
