@@ -41,20 +41,28 @@ internal object UpdateScheduler {
     private const val DISCHARGING_INTERVAL_MS = 5 * 60_000L
 
     /**
-     * While charging, and in a debug build throughout.
+     * While charging.
      *
      * The usual argument against polling this often — battery cost — does not apply to a device
      * on mains, and it lands on the widget's worst-behaved transition: **nothing catches an
      * unplug except this alarm**, so the tick that notices it comes a minute after the fact
      * instead of five. Plug-in detection stays bounded by [DISCHARGING_INTERVAL_MS], which is why
      * that one is five minutes and not fifteen.
-     *
-     * A minute is also the floor: `setInexactRepeating` clamps anything shorter to 60s for
-     * `targetSdk` 22 and up. A debug build therefore polls at this rate in both states — the
-     * charging switch is a no-op there, and `adb shell dumpsys alarm` is the way to see which
-     * interval is armed on a release build.
      */
     private const val CHARGING_INTERVAL_MS = 60_000L
+
+    /**
+     * While discharging, in a debug build. Two minutes rather than five so a test cycle is
+     * bearable, and rather than one so that the switch to [CHARGING_INTERVAL_MS] is something a
+     * debug build can actually demonstrate — `dumpsys alarm` shows the period change, and the
+     * transitions can be timed against a real charger.
+     *
+     * It cannot go below a minute: `AlarmManagerService` expands any repeating period shorter
+     * than that ("Suspiciously short interval …; expanding to 60 seconds" in logcat). Chaining
+     * one-shot alarms would get around the clamp, at the price of replacing the mechanism the
+     * release build actually uses — so, no.
+     */
+    private const val DEBUG_DISCHARGING_INTERVAL_MS = 2 * 60_000L
 
     /**
      * Arms (or re-arms) the alarm at the interval matching [charging]. Scheduling again replaces
@@ -84,13 +92,18 @@ internal object UpdateScheduler {
     }
 
     /**
-     * Debug builds poll fast in both states, so a change can be watched in a test cycle rather
-     * than a quarter of an hour. Read from the manifest flag rather than `BuildConfig.DEBUG` so
-     * the interval does not depend on a generated class.
+     * Debug builds poll faster in both states, so a change can be watched in a test cycle rather
+     * than a quarter of an hour, while keeping the two states far enough apart to tell the
+     * schedules apart. Debug-ness comes from the manifest flag rather than `BuildConfig.DEBUG`,
+     * so the interval does not depend on a generated class.
      */
     private fun intervalMs(context: Context, charging: Boolean): Long {
         val debuggable = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
-        return if (charging || debuggable) CHARGING_INTERVAL_MS else DISCHARGING_INTERVAL_MS
+        return when {
+            charging -> CHARGING_INTERVAL_MS
+            debuggable -> DEBUG_DISCHARGING_INTERVAL_MS
+            else -> DISCHARGING_INTERVAL_MS
+        }
     }
 
     private fun pendingIntent(context: Context): PendingIntent {

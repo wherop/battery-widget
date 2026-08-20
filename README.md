@@ -63,11 +63,13 @@ reads the current value from the sticky broadcast, and skips the bitmap push whe
 level nor the charging state has moved.
 
 The interval follows the charger: **5 minutes on battery, 1 minute while charging** (a debug
-build polls at a minute throughout). Polling that often is normally a battery argument, and on
-mains there is no such argument — and it lands on the widget's worst transition, because
-**nothing notices an unplug except this alarm**, so an unplug now shows within a minute rather
-than five. Plug-in latency stays bounded by the slower interval, which is why that one is five
-minutes and not fifteen. A minute is the floor: `setInexactRepeating` clamps anything shorter.
+build shortens the first to 2 minutes, keeping the two schedules distinguishable while
+testing). Polling that often is normally a battery argument, and on mains there is no such
+argument — and it lands on the widget's worst transition, because **nothing notices an unplug
+except this alarm**, so an unplug now shows within a minute rather than five. Plug-in latency
+stays bounded by the slower interval, which is why that one is five minutes and not fifteen. A
+minute is the floor: the system expands any repeating period shorter than that.
+
 The switch happens in `BatteryWidgetUpdater`, the one place that sees the state change, and only
 on the transition — re-arming on every tick would push the next tick away each time.
 
@@ -170,5 +172,7 @@ What is verified on a real device, and what is not:
 | Charger in → bolt appears                  | Verified, via the alarm — ~6 min at the 15-minute interval |
 | Charger out → bolt disappears              | Verified, via the alarm — 34s at the 1-minute interval     |
 | `ChargingJobService` firing from a charger | Verified, but 15 min after plug-in, behind the alarm       |
-| Faster polling while charging              | Compiles and unit-tested; not yet watched on a phone        |
+| Faster polling while charging              | Verified on the A53: period follows the charger both ways  |
+| Charger out → bolt disappears (new)        | Verified on the A53 — 1m16s at the 1-minute interval       |
+| App standby on a fresh, never-opened install | Bucket NEVER defers the alarm ~a year; see CLAUDE.md      |
 | Non-Samsung hardware                       | Untested — the charging constraint may well be prompt      |

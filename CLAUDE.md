@@ -16,7 +16,9 @@ never arrives by broadcast" under Gotchas before touching either.
 
 On 2026-08-20 the update path was simplified around that conclusion: the 0.5s fill animation is
 gone (single bitmap push per update, `CssEase.kt` deleted, no more `goAsync()`), and the alarm
-now polls once a minute while charging and every five minutes on battery. Both are compiled and
+now polls once a minute while charging and every five minutes on battery (two in debug). Both
+were then run on the A53 against a real charger — plug-in and unplug each landed on the first
+tick after the event, and the armed period followed the charger in both directions. Both are compiled and
 unit-tested; the charging switch has not yet been watched on hardware.
 
 ## Build & run
@@ -56,7 +58,7 @@ adb shell dumpsys battery reset          # hand control back to the real battery
 ```
 
 **A level change alone does not repaint a placed widget immediately** — nothing wakes the app
-for it, so you are waiting on the alarm (a minute in a debug build). To force one, reinstall
+for it, so you are waiting on the alarm (two minutes in a debug build, one while charging). To force one, reinstall
 (`MY_PACKAGE_REPLACED` does get through), drive `ChargingJobService` with `cmd jobscheduler`
 (see Gotchas), or use `PreviewActivity`, which reads battery state on create and has its own
 slider.
@@ -163,9 +165,11 @@ it fires, since a job is one-shot. Re-arming the **alarm** is a different matter
 
 ### Polling interval: five minutes on battery, one on a charger
 
-`UpdateScheduler` polls every **5 min while discharging** and every **1 min while charging**; a
-debug build polls at a minute in both states, because testing anything charger-related against
-a five- or fifteen-minute alarm is unbearable.
+`UpdateScheduler` polls every **5 min while discharging** and every **1 min while charging**. A
+debug build shortens the discharging interval to **2 min**, because testing anything
+charger-related against a five- or fifteen-minute alarm is unbearable — but not to one minute,
+so that the switch between the two schedules stays observable in the build you are actually
+testing with.
 
 Five rather than `INTERVAL_FIFTEEN_MINUTES` because the alarm is the primary mechanism, not a
 backstop. It is cheap to shorten because it is **non-wakeup** (`AlarmManager.ELAPSED`, not
@@ -176,9 +180,12 @@ which is when somebody might be looking at the widget. It does give up the batch
 One while charging because the usual objection to frequent polling is battery cost, which does
 not apply on mains, and because **nothing catches an unplug except the alarm** — polling fast
 *while charging* is precisely what shortens unplug latency, while plug-in latency stays bounded
-by the slow interval. A minute is also the floor: `setInexactRepeating` clamps shorter periods
-for `targetSdk` 22+, which is why the debug and charging intervals are the same number and why
-the switch is invisible in a debug build (read `dumpsys alarm` on a release build to see it).
+by the slow interval. A minute is also the floor: `AlarmManagerService` expands any repeating
+period shorter than 60s ("Suspiciously short interval …; expanding to 60 seconds"). Chaining
+one-shot alarms would evade the clamp, but it would also replace the repeating alarm the release
+build runs on, so a test would no longer be testing the shipped mechanism. `adb shell dumpsys
+alarm | grep -A2 batterywidget` shows which period is armed: 120000 or 60000 in debug, 300000 or
+60000 in release.
 
 **The switch lives in `BatteryWidgetUpdater`, not in the scheduler**, because that is the one
 place that compares the state it just read against `WidgetState` and so can see the charging bit
@@ -206,6 +213,29 @@ adb shell dumpsys jobscheduler | grep -A3 "JOB #u0a.*ChargingJobService"
 
 The constraint firing from a real charger **has** now been seen — on the A53, 15 minutes after
 plugging in (see the table above).
+
+### A fresh install sits in standby bucket NEVER, and the alarm is deferred a year
+
+Measured on the A53 on 2026-08-20, immediately after installing and placing the widget without
+ever opening the app:
+
+```
+$ adb shell am get-standby-bucket dev.wherop.batterywidget
+50                                          # NEVER
+policyWhenElapsed: requester=-1m47s app_standby=+364d23h56m12s
+whenElapsed=+364d23h56m12s maxWhenElapsed=+364d23h56m12s
+```
+
+The alarm is armed correctly and then held by app standby for **a year** — so the widget's only
+update mechanism never runs. Launching `PreviewActivity` once moved the app to bucket 10
+(ACTIVE) and the same alarm went live (`whenElapsed=+1m44s`).
+
+This is reachable by a real user: placing a widget does not require ever opening the app. AOSP's
+`AppStandbyController` does treat a package with a bound widget as active, so the bucket may
+well promote itself on the next evaluation — that was not waited out, and it is worth retesting
+(fresh install, place the widget, leave the app unopened, check the bucket an hour later) before
+concluding anything. Until then, take a widget that never updates on a fresh install as this,
+not as a scheduling bug: check the bucket first.
 
 ### Testing on the Galaxy A53 over wireless debugging
 
