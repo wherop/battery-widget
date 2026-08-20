@@ -21,7 +21,7 @@ class BootReceiver : BroadcastReceiver() {
             Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> {
                 UpdateScheduler.schedule(context)
                 ChargingJobService.schedule(context)
-                BatteryWidgetUpdater.updateAll(context)
+                BatteryWidgetUpdater.updateAll(context, force = true)
             }
         }
     }

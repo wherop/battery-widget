@@ -14,6 +14,11 @@ broadcasts that Android silently drops, and then tested end to end on a Galaxy A
 polling alarm, not the job, is what actually keeps the widget current** — read "Battery state
 never arrives by broadcast" under Gotchas before touching either.
 
+On 2026-08-20 the update path was simplified around that conclusion: the 0.5s fill animation is
+gone (single bitmap push per update, `CssEase.kt` deleted, no more `goAsync()`), and the alarm
+now polls once a minute while charging and every five minutes on battery. Both are compiled and
+unit-tested; the charging switch has not yet been watched on hardware.
+
 ## Build & run
 
 ```bash
@@ -146,21 +151,21 @@ Three things to keep straight:
   held job and our own `onStopJob` re-arming it into a still-satisfied constraint. The service
   now redraws once, calls `jobFinished()`, and `onStopJob` does not re-arm.
 - **Nothing catches an unplug except the alarm**, which is the price of the above and the
-  reason the release interval is five minutes rather than fifteen.
+  reason the discharging interval is five minutes rather than fifteen — and the reason the
+  alarm switches to one minute *while charging*, since that is the tick that has to notice it.
 - `setRequiresBatteryNotLow(true)` was considered for the colour thresholds and **not** used.
   It only signals the recovery direction, and against the system's own low threshold, not the
   design's 25%/15%.
 
-Re-arming is idempotent and happens from `onEnabled`, `BootReceiver` and every alarm tick —
-deliberately **not** from `onStopJob`. It is also what brings the job back after it fires,
-since a job is one-shot.
+Re-arming the **job** is idempotent and happens from `onEnabled`, `BootReceiver` and every
+alarm tick — deliberately **not** from `onStopJob`. It is also what brings the job back after
+it fires, since a job is one-shot. Re-arming the **alarm** is a different matter: see below.
 
-### Polling interval: five minutes, one in debug
+### Polling interval: five minutes on battery, one on a charger
 
-`UpdateScheduler` uses `BuildConfig.DEBUG` to poll every **60s in debug** and every **5 min in
-release** (`buildFeatures { buildConfig = true }` in `app/build.gradle.kts` exists for this).
-Testing anything charger-related against a fifteen-minute alarm is unbearable; testing against
-one minute is fine.
+`UpdateScheduler` polls every **5 min while discharging** and every **1 min while charging**; a
+debug build polls at a minute in both states, because testing anything charger-related against
+a five- or fifteen-minute alarm is unbearable.
 
 Five rather than `INTERVAL_FIFTEEN_MINUTES` because the alarm is the primary mechanism, not a
 backstop. It is cheap to shorten because it is **non-wakeup** (`AlarmManager.ELAPSED`, not
@@ -168,7 +173,25 @@ backstop. It is cheap to shorten because it is **non-wakeup** (`AlarmManager.ELA
 which is when somebody might be looking at the widget. It does give up the batching that the
 `INTERVAL_*` constants get.
 
-`updatePeriodMillis` cannot follow it down — the system clamps that to 30 minutes.
+One while charging because the usual objection to frequent polling is battery cost, which does
+not apply on mains, and because **nothing catches an unplug except the alarm** — polling fast
+*while charging* is precisely what shortens unplug latency, while plug-in latency stays bounded
+by the slow interval. A minute is also the floor: `setInexactRepeating` clamps shorter periods
+for `targetSdk` 22+, which is why the debug and charging intervals are the same number and why
+the switch is invisible in a debug build (read `dumpsys alarm` on a release build to see it).
+
+**The switch lives in `BatteryWidgetUpdater`, not in the scheduler**, because that is the one
+place that compares the state it just read against `WidgetState` and so can see the charging bit
+flip. Re-arm only on that transition: `setInexactRepeating` restarts the period, so re-arming on
+every tick would keep pushing the next tick away.
+
+Debug-ness comes from `ApplicationInfo.FLAG_DEBUGGABLE`, **not** `BuildConfig.DEBUG`. The
+`buildFeatures { buildConfig = true }` block existed only for that reference and is gone with
+it, so nothing in the app depends on a generated class any more. (Studio was reporting
+"Unresolved reference 'BuildConfig'" while `./gradlew` compiled the same source clean — a sync
+artefact, but the flag makes it moot. Re-add the block before referencing `BuildConfig` again.)
+
+`updatePeriodMillis` cannot follow the interval down — the system clamps that to 30 minutes.
 
 **The emulator cannot trigger the charging constraint naturally.** `dumpsys battery set ac 1`
 plus `set status 2` makes `BatteryStatus.read()` report charging correctly, but JobScheduler's
@@ -208,11 +231,15 @@ Two things will bite:
   cannot register receivers, not even the null-receiver sticky read it uses.
 - `ACTION_BATTERY_CHANGED` can't be manifest-registered at all, which is why the state is
   read on demand from the sticky broadcast rather than pushed.
-- The 0.5s fill transition posts 8 bitmaps from a `Handler`; the broadcast is held open with
-  `goAsync()` so the process survives the frames. Skipped when the level didn't change.
-  It does now run — the alarm requests animated updates, and at the debug interval the level
-  moves between ticks often enough to trigger it — but nobody has inspected the frames, and
-  `CssEase.kt` still has no test.
+- **The 0.5s fill transition is deliberately not implemented**, though the design specifies it.
+  It was: 8 bitmaps posted from a `Handler`, eased by `CssEase.kt`, with `goAsync()` holding the
+  broadcast open for the frames. Watched on a phone it earned nothing — the widget repaints on a
+  timer, so consecutive draws are ~1% apart and the easing smoothed a change too small to see.
+  Removed along with `CssEase.kt` and the `goAsync()`. Do not restore it without also giving the
+  widget a real per-percent event to animate from.
+- `WidgetState` survived that removal with a new job: a timer tick redraws nothing when neither
+  the level nor the charging bit has moved, and the charging comparison is what re-arms the
+  alarm. Pushes that must happen regardless — placement, resize, reboot — pass `force = true`.
 - `adb shell am broadcast` cannot reach the receivers (`exported="false"`), so use
   `dumpsys battery` to move state and reinstall to force a repaint.
 - Orientation is derived from the widget's box (`width > height`), not its grid span, because

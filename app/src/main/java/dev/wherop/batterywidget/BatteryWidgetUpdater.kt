@@ -3,95 +3,60 @@ package dev.wherop.batterywidget
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
-import android.graphics.Color
-import android.os.Handler
-import android.os.Looper
 import android.widget.RemoteViews
-import kotlin.math.roundToInt
 
 /**
  * Renders the current battery state into every placed widget.
  *
- * The design calls for the fill and its colour to move over 0.5s rather than jump, which a
- * widget can only do by posting a short burst of frames — see [animate]. Everything else
- * (the percentage text, the charging bolt) switches instantly, as in the prototype.
+ * Every update is a single bitmap push. The prototype specifies `transition: … 0.5s ease` on the
+ * fill and its colour, and this deliberately does not follow it: the widget is repainted on a
+ * timer rather than on a battery event, so consecutive updates are about one percent apart and
+ * the easing was smoothing a change too small to see. See the deviations section in README.md.
+ *
+ * It is also where the polling interval gets chosen, because this is the only place that sees
+ * the charging state change from one draw to the next — see [UpdateScheduler].
  */
 object BatteryWidgetUpdater {
 
-    /** Frames posted across [BatteryDesign.TRANSITION_MS]; each one is a full bitmap push. */
-    private const val FRAMES = 8
-
     /**
-     * @param animate  interpolate from the previously drawn state
-     * @param onFinished invoked once the last frame is pushed — use it to release a
-     *                   `BroadcastReceiver.goAsync()` result
+     * @param force redraw even when the state has not moved since the last push. Placement,
+     *              resize and a reboot need it; a timer tick does not.
      */
-    fun updateAll(context: Context, animate: Boolean = false, onFinished: (() -> Unit)? = null) {
+    fun updateAll(context: Context, force: Boolean = false) {
         val app = context.applicationContext
         val manager = AppWidgetManager.getInstance(app)
         val ids = manager.getAppWidgetIds(ComponentName(app, BatteryWidgetProvider::class.java))
-        update(app, manager, ids, animate, onFinished)
+        update(app, manager, ids, force)
     }
 
     fun update(
         context: Context,
         manager: AppWidgetManager,
         appWidgetIds: IntArray,
-        animate: Boolean = false,
-        onFinished: (() -> Unit)? = null,
+        force: Boolean = false,
     ) {
         val app = context.applicationContext
-        if (appWidgetIds.isEmpty()) {
-            onFinished?.invoke()
-            return
-        }
+        if (appWidgetIds.isEmpty()) return
 
-        val target = BatteryStatus.read(app)
+        val status = BatteryStatus.read(app)
         val previous = WidgetState.read(app)
-        WidgetState.write(app, target)
+        if (!force && status == previous) return
 
-        if (!animate || previous == null || previous.level == target.level) {
-            draw(app, manager, appWidgetIds, target.fraction, target.fillColor, target)
-            onFinished?.invoke()
-            return
+        WidgetState.write(app, status)
+
+        // The charger came or went, so the alarm has to run at the other interval from here on.
+        // Only on the transition: re-arming on every tick would push the next tick away each time.
+        if (previous == null || previous.charging != status.charging) {
+            UpdateScheduler.schedule(app, charging = status.charging)
         }
 
-        animate(app, manager, appWidgetIds, previous, target, onFinished)
-    }
-
-    private fun animate(
-        context: Context,
-        manager: AppWidgetManager,
-        appWidgetIds: IntArray,
-        from: BatteryStatus,
-        to: BatteryStatus,
-        onFinished: (() -> Unit)?,
-    ) {
-        val handler = Handler(Looper.getMainLooper())
-        val frameDelay = BatteryDesign.TRANSITION_MS / FRAMES
-
-        for (frame in 1..FRAMES) {
-            handler.postDelayed({
-                val t = CssEase.transform(frame.toFloat() / FRAMES)
-                draw(
-                    context,
-                    manager,
-                    appWidgetIds,
-                    fraction = from.fraction + (to.fraction - from.fraction) * t,
-                    fillColor = blend(from.fillColor, to.fillColor, t),
-                    status = to,
-                )
-                if (frame == FRAMES) onFinished?.invoke()
-            }, frameDelay * frame)
-        }
+        draw(app, manager, appWidgetIds, status)
     }
 
     private fun draw(
         context: Context,
         manager: AppWidgetManager,
         appWidgetIds: IntArray,
-        fraction: Float,
-        fillColor: Int,
         status: BatteryStatus,
     ) {
         val renderer = BatteryRenderer(context.resources.displayMetrics.density)
@@ -105,8 +70,8 @@ object BatteryWidgetUpdater {
             val bitmap = renderer.render(
                 widthPx = size.width,
                 heightPx = size.height,
-                fraction = fraction,
-                fillColor = fillColor,
+                fraction = status.fraction,
+                fillColor = status.fillColor,
                 label = status.label,
                 charging = status.charging,
             )
@@ -116,15 +81,5 @@ object BatteryWidgetUpdater {
             }
             manager.updateAppWidget(appWidgetId, views)
         }
-    }
-
-    /** Straight per-channel mix, matching how CSS transitions a background colour. */
-    private fun blend(from: Int, to: Int, t: Float): Int {
-        fun channel(shift: Int): Int {
-            val start = (from shr shift) and 0xFF
-            val end = (to shr shift) and 0xFF
-            return (start + (end - start) * t).roundToInt().coerceIn(0, 255)
-        }
-        return Color.argb(channel(24), channel(16), channel(8), channel(0))
     }
 }

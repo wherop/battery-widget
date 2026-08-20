@@ -3,8 +3,13 @@ package dev.wherop.batterywidget
 import android.content.Context
 
 /**
- * The last state the widget was drawn with. Kept only so an update can animate *from*
- * somewhere — the widget process is short-lived, so this cannot live in memory.
+ * The last state the widget was drawn with. Two things need it, and neither can hold it in
+ * memory, because the widget process is short-lived: a timer tick uses it to skip a redraw that
+ * would change nothing, and [BatteryWidgetUpdater] compares its `charging` against the current
+ * one to notice the charger arriving or leaving.
+ *
+ * A push that must happen regardless of the stored state — placement, resize, reboot — goes
+ * through `force` rather than around this.
  */
 internal object WidgetState {
 

@@ -88,8 +88,4 @@ object BatteryDesign {
     const val BOLT_STROKE: Int = 0x26000000
     /** Stroke width in viewBox units. */
     const val BOLT_STROKE_WIDTH: Float = 0.5f
-
-    // --- Motion -------------------------------------------------------------------------
-    /** `transition: … 0.5s ease` — level, fill colour and the leading-edge bend. */
-    const val TRANSITION_MS: Long = 500L
 }

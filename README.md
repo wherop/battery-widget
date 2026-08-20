@@ -41,15 +41,16 @@ dependency on top. Nothing here needs anything outside the platform framework.
 
 | File                                                                                            | Role                                                                         |
 |-------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------|
-| [BatteryDesign.kt](app/src/main/java/dev/wherop/batterywidget/BatteryDesign.kt)                 | Every colour, ratio, minimum and duration from the prototype, in one place   |
+| [BatteryDesign.kt](app/src/main/java/dev/wherop/batterywidget/BatteryDesign.kt)                 | Every colour, ratio and minimum from the prototype, in one place             |
 | [BatteryGeometry.kt](app/src/main/java/dev/wherop/batterywidget/BatteryGeometry.kt)             | Pure sizing math: orientation, silhouette, body, bump, fill and bend boxes   |
 | [BatteryRenderer.kt](app/src/main/java/dev/wherop/batterywidget/BatteryRenderer.kt)             | Canvas drawing — track, sheen, fill, leading-edge bend, bolt, percentage     |
-| [BatteryWidgetUpdater.kt](app/src/main/java/dev/wherop/batterywidget/BatteryWidgetUpdater.kt)   | Renders into every placed widget, including the 0.5s fill/colour transition  |
+| [BatteryWidgetUpdater.kt](app/src/main/java/dev/wherop/batterywidget/BatteryWidgetUpdater.kt)   | Renders the current state into every placed widget, in one bitmap push       |
 | [BatteryWidgetProvider.kt](app/src/main/java/dev/wherop/batterywidget/BatteryWidgetProvider.kt) | Widget lifecycle: placement, periodic update, resize                         |
 | [BatteryStatus.kt](app/src/main/java/dev/wherop/batterywidget/BatteryStatus.kt)                 | Level and charging state from the sticky `ACTION_BATTERY_CHANGED` broadcast  |
 | [ChargingJobService.kt](app/src/main/java/dev/wherop/batterywidget/ChargingJobService.kt)       | Notices the charger going in and coming out, via a `JobScheduler` constraint |
 | [BootReceiver.kt](app/src/main/java/dev/wherop/batterywidget/BootReceiver.kt)                   | Re-arms the alarm and the charging job after a reboot or an app update       |
-| [UpdateScheduler.kt](app/src/main/java/dev/wherop/batterywidget/UpdateScheduler.kt)             | Inexact 15-minute polling alarm                                              |
+| [UpdateScheduler.kt](app/src/main/java/dev/wherop/batterywidget/UpdateScheduler.kt)             | Polling alarm: 5 minutes on battery, 1 minute on a charger                   |
+| [WidgetState.kt](app/src/main/java/dev/wherop/batterywidget/WidgetState.kt)                     | The last state drawn — skips no-op redraws, and spots the charging flip      |
 | [WidgetSize.kt](app/src/main/java/dev/wherop/batterywidget/WidgetSize.kt)                       | The pixel box a widget instance currently occupies                           |
 | [PreviewActivity.kt](app/src/main/java/dev/wherop/batterywidget/PreviewActivity.kt)             | Development harness mirroring the prototype's preview                        |
 
@@ -57,9 +58,18 @@ dependency on top. Nothing here needs anything outside the platform framework.
 
 `ACTION_BATTERY_CHANGED` fires constantly and cannot be received from the manifest, and a
 background process holding a runtime receiver would be killed anyway. So the widget polls: an
-inexact non-wakeup alarm every **5 minutes** in release and every minute in debug builds, with
-`updatePeriodMillis` (30 minutes) as a backstop. Each refresh reads the current value from the
-sticky broadcast.
+inexact non-wakeup alarm, with `updatePeriodMillis` (30 minutes) as a backstop. Each refresh
+reads the current value from the sticky broadcast, and skips the bitmap push when neither the
+level nor the charging state has moved.
+
+The interval follows the charger: **5 minutes on battery, 1 minute while charging** (a debug
+build polls at a minute throughout). Polling that often is normally a battery argument, and on
+mains there is no such argument — and it lands on the widget's worst transition, because
+**nothing notices an unplug except this alarm**, so an unplug now shows within a minute rather
+than five. Plug-in latency stays bounded by the slower interval, which is why that one is five
+minutes and not fifteen. A minute is the floor: `setInexactRepeating` clamps anything shorter.
+The switch happens in `BatteryWidgetUpdater`, the one place that sees the state change, and only
+on the transition — re-arming on every tick would push the next tick away each time.
 
 This alarm is the widget's primary mechanism, not a fallback — see below. Shortening it is
 affordable because it is non-wakeup: it never wakes a sleeping phone, only piggybacking on
@@ -101,25 +111,27 @@ re-arms.
 
 So `ChargingJobService` is an opportunistic fast path that should help on devices whose
 platform reports charging promptly, and the alarm is what actually carries the widget — it is
-the only thing that notices an unplug at all. Re-arming happens from `onEnabled`,
-`BootReceiver` and every alarm tick.
+the only thing that notices an unplug at all. Re-arming the job happens from `onEnabled`,
+`BootReceiver` and every alarm tick; re-arming the *alarm* happens from the first two and from
+any redraw that sees the charging state flip.
 
 `BOOT_COMPLETED` and `MY_PACKAGE_REPLACED` are exempt from the restriction and do arrive,
 which is all [BootReceiver.kt](app/src/main/java/dev/wherop/batterywidget/BootReceiver.kt)
 now listens for. `exported="false"` was never the cause. See `CLAUDE.md` for the full
 diagnosis and for how to drive the job from `adb`.
 
-### The 0.5s transition
+### The 0.5s transition, and why it is gone
 
-The prototype animates the fill and its colour with `transition: 0.5s ease`. A widget has no
-animator, so `BatteryWidgetUpdater` posts eight bitmaps across 500ms, eased with the same
-`cubic-bezier(0.25, 0.1, 0.25, 1)` curve, holding the broadcast open with `goAsync()` while
-they run. The percentage text and the charging bolt switch instantly, as they do in CSS.
-Level changes of 0% skip the animation entirely, so the common case is a single push.
+The prototype animates the fill and its colour with `transition: 0.5s ease`, and this port did
+follow it for a while: eight bitmaps posted across 500ms through a `Handler`, eased with the
+same `cubic-bezier(0.25, 0.1, 0.25, 1)` curve, with `goAsync()` holding the broadcast open so
+the process survived the frames.
 
-This path does run — every alarm tick requests an animated update, and the level moves between
-ticks — but the frames have not been inspected closely, and `CssEase.kt` has no test of its
-own.
+It was removed once it had been watched on a phone. The widget is repainted on a timer, not on
+a battery event, so consecutive draws are about one percent apart — the easing was smoothing a
+change too small to see, at the cost of eight bitmap pushes per update, a frame loop, an eased
+curve to keep tested, and a held-open broadcast. Every update is now a single push. See
+"Deviations" below.
 
 ## Deviations from the handoff
 
@@ -132,6 +144,8 @@ own.
 - **The widget-picker preview is a static vector** ([battery_glyph.xml](app/src/main/res/drawable/battery_glyph.xml),
   the vertical shape at 62%) without the percentage text, since vector drawables cannot draw
   text. The live widget is unaffected.
+- **No fill animation.** The spec's `transition: … 0.5s ease` is not implemented; updates land
+  instantly. It was implemented and then removed — see above.
 - **No tap target.** The design does not specify one. Opening battery settings on tap would
   be a two-line addition in `BatteryWidgetUpdater.draw`.
 
@@ -156,5 +170,5 @@ What is verified on a real device, and what is not:
 | Charger in → bolt appears                  | Verified, via the alarm — ~6 min at the 15-minute interval |
 | Charger out → bolt disappears              | Verified, via the alarm — 34s at the 1-minute interval     |
 | `ChargingJobService` firing from a charger | Verified, but 15 min after plug-in, behind the alarm       |
-| 0.5s fill animation and `CssEase.kt`       | Has now run; not inspected frame by frame                  |
+| Faster polling while charging              | Compiles and unit-tested; not yet watched on a phone        |
 | Non-Samsung hardware                       | Untested — the charging constraint may well be prompt      |

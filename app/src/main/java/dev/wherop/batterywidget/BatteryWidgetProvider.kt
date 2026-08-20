@@ -14,8 +14,9 @@ import android.os.Bundle
 class BatteryWidgetProvider : AppWidgetProvider() {
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
-        // Periodic and first-placement redraws: no animation, just land on the current value.
-        BatteryWidgetUpdater.update(context, appWidgetManager, appWidgetIds)
+        // Periodic and first-placement redraws. Forced: a widget that has just been placed, or
+        // whose host has restarted, needs a bitmap even when the battery has not moved.
+        BatteryWidgetUpdater.update(context, appWidgetManager, appWidgetIds, force = true)
     }
 
     override fun onAppWidgetOptionsChanged(
@@ -24,8 +25,9 @@ class BatteryWidgetProvider : AppWidgetProvider() {
         appWidgetId: Int,
         newOptions: Bundle,
     ) {
-        // Resized: the shape, radii, bump and type sizes are all derived from the new box.
-        BatteryWidgetUpdater.update(context, appWidgetManager, intArrayOf(appWidgetId))
+        // Resized: the shape, radii, bump and type sizes are all derived from the new box, so
+        // this has to redraw even though the state is the same as the last push.
+        BatteryWidgetUpdater.update(context, appWidgetManager, intArrayOf(appWidgetId), force = true)
     }
 
     override fun onEnabled(context: Context) {
@@ -46,9 +48,7 @@ class BatteryWidgetProvider : AppWidgetProvider() {
             // ever reached onStopJob to re-arm it. Scheduling is idempotent, so paying for it
             // on every tick is cheaper than letting the charger go unnoticed until a reboot.
             ChargingJobService.schedule(context)
-            // Keep the broadcast alive for the length of the fill animation.
-            val pendingResult = goAsync()
-            BatteryWidgetUpdater.updateAll(context, animate = true) { pendingResult.finish() }
+            BatteryWidgetUpdater.updateAll(context)
         }
     }
 

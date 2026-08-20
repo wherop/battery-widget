@@ -28,7 +28,7 @@ import android.content.Context
 class ChargingJobService : JobService() {
 
     override fun onStartJob(params: JobParameters?): Boolean {
-        BatteryWidgetUpdater.updateAll(applicationContext, animate = true)
+        BatteryWidgetUpdater.updateAll(applicationContext)
         // Done. false = no work continues on another thread, so the job ends here and the
         // system has no running job to stop, quota to charge, or wakelock to hold.
         jobFinished(params, false)
